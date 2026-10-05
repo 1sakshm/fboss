@@ -37,7 +37,7 @@ jobs:
             --build-type MinSizeRel \
             --extra-cmake-defines='{"CMAKE_CXX_STANDARD": "20", "RANGE_V3_TESTS": "OFF", "RANGE_V3_PERF": "OFF"}' \
             --scratch-path /var/FBOSS/tmp_bld_dir --src-dir /var/FBOSS/fboss \
-            --num-jobs 1 --cmake-target switch_test --cmake-target api_test \
+            --num-jobs 2 --cmake-target switch_test --cmake-target api_test \
             fboss 2>&1 | tee "$log"
           SCRIPT
           docker run --rm --cap-add=CAP_AUDIT_WRITE --pids-limit=0 \
