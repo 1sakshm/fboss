@@ -17,6 +17,14 @@ jobs:
           free -h
       - name: Pin dependencies
         run: tar xzf fboss/oss/stable_commits/latest_stable_hashes.tar.gz --no-same-owner
+      - name: Restore isolated build scratch
+        id: scratch-cache
+        uses: actions/cache/restore@v5
+        with:
+          path: ${{ runner.temp }}/fboss-613
+          key: fboss-613-minsize-v1-${{ hashFiles('fboss/oss/docker/Dockerfile', 'fboss/oss/stable_commits/latest_stable_hashes.tar.gz') }}-${{ github.run_id }}
+          restore-keys: |
+            fboss-613-minsize-v1-${{ hashFiles('fboss/oss/docker/Dockerfile', 'fboss/oss/stable_commits/latest_stable_hashes.tar.gz') }}-
       - name: Build FBOSS container
         run: |
           set -o pipefail
@@ -31,15 +39,24 @@ jobs:
           #!/bin/bash
           set -euo pipefail
           cd /var/FBOSS/fboss
+          targets=("$@")
+          if [[ ${#targets[@]} -eq 0 ]]; then
+            targets=(--cmake-target switch_test --cmake-target api_test)
+          fi
           log=/var/FBOSS/tmp_bld_dir/logs/build-$(date +%Y%m%d-%H%M%S).log
           ln -sfn "$(basename "$log")" /var/FBOSS/tmp_bld_dir/logs/latest.log
           ./fboss/oss/scripts/run-getdeps.py build --allow-system-packages \
             --build-type MinSizeRel \
             --extra-cmake-defines='{"CMAKE_CXX_STANDARD": "20", "RANGE_V3_TESTS": "OFF", "RANGE_V3_PERF": "OFF"}' \
             --scratch-path /var/FBOSS/tmp_bld_dir --src-dir /var/FBOSS/fboss \
-            --num-jobs 2 --cmake-target switch_test --cmake-target api_test \
-            fboss 2>&1 | tee "$log"
+            --num-jobs 2 "${targets[@]}" \
+            fboss 2>&1 | tee "$log" | sed -u '/^-- Installing:/d; /^-- Up-to-date:/d'
           SCRIPT
+          docker run --rm --cap-add=CAP_AUDIT_WRITE --pids-limit=0 \
+            -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
+            -v "$PWD:/var/FBOSS/fboss" -v "$RUNNER_TEMP/fboss-613:/var/FBOSS/tmp_bld_dir" \
+            fboss_image bash /var/FBOSS/tmp_bld_dir/scripts/build-fake-tests.sh \
+            --cmake-target CMakeFiles/switch_test.dir/fboss/agent/hw/sai/switch/tests/HostifManagerTest.cpp.o
           docker run --rm --cap-add=CAP_AUDIT_WRITE --pids-limit=0 \
             -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
             -v "$PWD:/var/FBOSS/fboss" -v "$RUNNER_TEMP/fboss-613:/var/FBOSS/tmp_bld_dir" \
@@ -94,6 +111,12 @@ jobs:
           test -n "$api_binary"
           "$api_binary" 2>&1 | tee /var/FBOSS/tmp_bld_dir/logs/api-test.log
           SCRIPT
+      - name: Preserve isolated build scratch
+        if: always()
+        uses: actions/cache/save@v5
+        with:
+          path: ${{ runner.temp }}/fboss-613
+          key: ${{ steps.scratch-cache.outputs.cache-primary-key }}
       - name: Save validation logs
         if: always()
         uses: actions/upload-artifact@v7
