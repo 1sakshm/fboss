@@ -4,9 +4,12 @@ on:
     branches: [validation/fake-sai-cpu-queues]
 permissions:
   contents: read
+concurrency:
+  group: issue-613-full-validation
+  cancel-in-progress: false
 jobs:
   fake-sai-tests:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-22.04
     timeout-minutes: 360
     steps:
       - uses: actions/checkout@v7
