@@ -22,7 +22,9 @@ jobs:
           set -o pipefail
           mkdir -p validation-logs
           docker build -t fboss_image -f fboss/oss/docker/Dockerfile . 2>&1 | tee validation-logs/image.log
-      - name: Build and test fake SAI
+      - name: Record baseline revision
+        run: git ls-remote origin refs/heads/fix/fake-sai-cpu-queues | cut -f1 > "$RUNNER_TEMP/baseline-revision"
+      - name: Build baseline fake-SAI tests
         run: |
           mkdir -p "$RUNNER_TEMP/fboss-613/scripts" "$RUNNER_TEMP/fboss-613/logs"
           cat > "$RUNNER_TEMP/fboss-613/scripts/build-fake-tests.sh" <<'SCRIPT'
@@ -37,18 +39,61 @@ jobs:
             --scratch-path /var/FBOSS/tmp_bld_dir --src-dir /var/FBOSS/fboss \
             --num-jobs 1 --cmake-target switch_test --cmake-target api_test \
             fboss 2>&1 | tee "$log"
-          test_binary=$(find /var/FBOSS/tmp_bld_dir/build -type f -name switch_test -executable -print -quit)
-          test -n "$test_binary"
-          "$test_binary" --gtest_filter='HostifManagerTest.defaultCpu*' 2>&1 | tee /var/FBOSS/tmp_bld_dir/logs/regression.log
-          "$test_binary" 2>&1 | tee /var/FBOSS/tmp_bld_dir/logs/switch-test.log
-          api_binary=$(find /var/FBOSS/tmp_bld_dir/build -type f -name api_test -executable -print -quit)
-          test -n "$api_binary"
-          "$api_binary" 2>&1 | tee /var/FBOSS/tmp_bld_dir/logs/api-test.log
           SCRIPT
           docker run --rm --cap-add=CAP_AUDIT_WRITE --pids-limit=0 \
             -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
             -v "$PWD:/var/FBOSS/fboss" -v "$RUNNER_TEMP/fboss-613:/var/FBOSS/tmp_bld_dir" \
             fboss_image bash /var/FBOSS/tmp_bld_dir/scripts/build-fake-tests.sh
+      - name: Confirm baseline regression fails with issue 613
+        run: |
+          docker run --rm -i --cap-add=CAP_AUDIT_WRITE --pids-limit=0 \
+            -v "$PWD:/var/FBOSS/fboss" -v "$RUNNER_TEMP/fboss-613:/var/FBOSS/tmp_bld_dir" \
+            fboss_image bash -s <<'SCRIPT'
+          set -euo pipefail
+          test_binary=$(find /var/FBOSS/tmp_bld_dir/build -type f -name switch_test -executable -print -quit)
+          test -n "$test_binary"
+          set +e
+          "$test_binary" --gtest_filter='HostifManagerTest.defaultCpu*' 2>&1 | tee /var/FBOSS/tmp_bld_dir/logs/baseline-regression.log
+          status=${PIPESTATUS[0]}
+          set -e
+          test "$status" -ne 0
+          grep -F 'Voq ID : 9 exceeds max supported CPU queues: 8' /var/FBOSS/tmp_bld_dir/logs/baseline-regression.log
+          SCRIPT
+      - name: Wait for reviewed fix revision
+        timeout-minutes: 60
+        run: |
+          baseline=$(cat "$RUNNER_TEMP/baseline-revision")
+          while true; do
+            revision=$(git ls-remote origin refs/heads/fix/fake-sai-cpu-queues | cut -f1)
+            if [[ -n "$revision" && "$revision" != "$baseline" ]]; then
+              git fetch origin refs/heads/fix/fake-sai-cpu-queues
+              git checkout --detach FETCH_HEAD
+              break
+            fi
+            sleep 30
+          done
+      - name: Build fixed fake-SAI tests incrementally
+        run: |
+          docker run --rm --cap-add=CAP_AUDIT_WRITE --pids-limit=0 \
+            -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
+            -v "$PWD:/var/FBOSS/fboss" -v "$RUNNER_TEMP/fboss-613:/var/FBOSS/tmp_bld_dir" \
+            fboss_image bash /var/FBOSS/tmp_bld_dir/scripts/build-fake-tests.sh
+      - name: Run fixed regression and complete fake-SAI unit suites
+        run: |
+          docker run --rm -i --cap-add=CAP_AUDIT_WRITE --pids-limit=0 \
+            -v "$PWD:/var/FBOSS/fboss" -v "$RUNNER_TEMP/fboss-613:/var/FBOSS/tmp_bld_dir" \
+            fboss_image bash -s <<'SCRIPT'
+          set -euo pipefail
+          cd /var/FBOSS/fboss
+          clang-format --style=file --dry-run --Werror fboss/agent/hw/switch_asics/FakeAsic.h fboss/agent/hw/sai/switch/tests/HostifManagerTest.cpp
+          test_binary=$(find /var/FBOSS/tmp_bld_dir/build -type f -name switch_test -executable -print -quit)
+          test -n "$test_binary"
+          "$test_binary" --gtest_filter='HostifManagerTest.defaultCpu*' 2>&1 | tee /var/FBOSS/tmp_bld_dir/logs/fixed-regression.log
+          "$test_binary" 2>&1 | tee /var/FBOSS/tmp_bld_dir/logs/switch-test.log
+          api_binary=$(find /var/FBOSS/tmp_bld_dir/build -type f -name api_test -executable -print -quit)
+          test -n "$api_binary"
+          "$api_binary" 2>&1 | tee /var/FBOSS/tmp_bld_dir/logs/api-test.log
+          SCRIPT
       - name: Save validation logs
         if: always()
         uses: actions/upload-artifact@v7
