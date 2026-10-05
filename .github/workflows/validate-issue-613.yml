@@ -111,6 +111,12 @@ jobs:
           test -n "$api_binary"
           "$api_binary" 2>&1 | tee /var/FBOSS/tmp_bld_dir/logs/api-test.log
           SCRIPT
+      - name: Make container build scratch readable by the cache action
+        if: always()
+        run: |
+          if [[ -d "$RUNNER_TEMP/fboss-613" ]]; then
+            sudo chown -R "$(id -u):$(id -g)" "$RUNNER_TEMP/fboss-613"
+          fi
       - name: Preserve isolated build scratch
         if: always()
         uses: actions/cache/save@v5
