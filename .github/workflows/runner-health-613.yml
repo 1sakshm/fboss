@@ -1,0 +1,29 @@
+name: Issue 613 runner health
+on:
+  push:
+    branches: [validation/runner-health-613]
+permissions: {}
+concurrency:
+  group: issue-613-runner-health
+  cancel-in-progress: true
+jobs:
+  probe:
+    name: Probe ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-22.04, ubuntu-24.04]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 5
+    steps:
+      - name: Confirm x86 Linux and Docker readiness
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = x86_64
+          test "$(docker version --format '{{.Server.Os}}/{{.Server.Arch}}')" = linux/amd64
+          awk '/MemTotal:/ { if ($2 < 12 * 1024 * 1024) exit 1; found = 1 } END { if (!found) exit 1 }' /proc/meminfo
+          uname -a
+          docker info --format 'CPUs={{.NCPU}} Memory={{.MemTotal}}'
+          free -h
+          df -h /
