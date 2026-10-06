@@ -56,12 +56,12 @@ jobs:
             --num-jobs 2 "${targets[@]}" \
             fboss 2>&1 | tee "$log" | sed -u '/^-- Installing:/d; /^-- Up-to-date:/d'
           SCRIPT
-          bash "$RUNNER_TEMP/fboss-613/scripts/build-heartbeat.sh" docker run --rm --cap-add=CAP_AUDIT_WRITE --pids-limit=0 \
+          bash "$RUNNER_TEMP/fboss-613/scripts/build-heartbeat.sh" docker run --rm --label fboss.issue613.validation=true --cap-add=CAP_AUDIT_WRITE --pids-limit=0 \
             -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
             -v "$PWD:/var/FBOSS/fboss" -v "$RUNNER_TEMP/fboss-613:/var/FBOSS/tmp_bld_dir" \
             fboss_image bash /var/FBOSS/tmp_bld_dir/scripts/build-fake-tests.sh \
             --cmake-target CMakeFiles/switch_test.dir/fboss/agent/hw/sai/switch/tests/HostifManagerTest.cpp.o
-          bash "$RUNNER_TEMP/fboss-613/scripts/build-heartbeat.sh" docker run --rm --cap-add=CAP_AUDIT_WRITE --pids-limit=0 \
+          bash "$RUNNER_TEMP/fboss-613/scripts/build-heartbeat.sh" docker run --rm --label fboss.issue613.validation=true --cap-add=CAP_AUDIT_WRITE --pids-limit=0 \
             -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
             -v "$PWD:/var/FBOSS/fboss" -v "$RUNNER_TEMP/fboss-613:/var/FBOSS/tmp_bld_dir" \
             fboss_image bash /var/FBOSS/tmp_bld_dir/scripts/build-fake-tests.sh
@@ -95,7 +95,7 @@ jobs:
           done
       - name: Build fixed fake-SAI tests incrementally
         run: |
-          bash "$RUNNER_TEMP/fboss-613/scripts/build-heartbeat.sh" docker run --rm --cap-add=CAP_AUDIT_WRITE --pids-limit=0 \
+          bash "$RUNNER_TEMP/fboss-613/scripts/build-heartbeat.sh" docker run --rm --label fboss.issue613.validation=true --cap-add=CAP_AUDIT_WRITE --pids-limit=0 \
             -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
             -v "$PWD:/var/FBOSS/fboss" -v "$RUNNER_TEMP/fboss-613:/var/FBOSS/tmp_bld_dir" \
             fboss_image bash /var/FBOSS/tmp_bld_dir/scripts/build-fake-tests.sh
@@ -115,9 +115,13 @@ jobs:
           test -n "$api_binary"
           "$api_binary" 2>&1 | tee /var/FBOSS/tmp_bld_dir/logs/api-test.log
           SCRIPT
-      - name: Make container build scratch readable by the cache action
+      - name: Stop remaining validation builds and make scratch readable
         if: always()
         run: |
+          containers=$(docker ps -q --filter label=fboss.issue613.validation=true)
+          if [[ -n "$containers" ]]; then
+            docker stop --time 30 $containers
+          fi
           if [[ -d "$RUNNER_TEMP/fboss-613" ]]; then
             sudo chown -R "$(id -u):$(id -g)" "$RUNNER_TEMP/fboss-613"
           fi
